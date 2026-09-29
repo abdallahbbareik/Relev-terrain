@@ -23,7 +23,7 @@ html,body{height:100%;margin:0;font:16px/1.4 system-ui,sans-serif;color:var(--in
 .sheet.on{display:block}
 .sheet h2{margin:0 0 12px;font-size:20px}
 label{display:block;margin:12px 0 4px;color:var(--mut);font-size:14px}
-input[type=text],textarea{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#0c2620;color:var(--ink);font:inherit}
+input[type=text],textarea,select{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#0c2620;color:var(--ink);font:inherit}
 .row{display:flex;gap:8px;margin-top:12px}
 .btn{flex:1;padding:12px;border-radius:6px;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;text-align:center}
 .btn.p{background:var(--acc);color:#12352b;border-color:var(--acc);font-weight:600}
@@ -50,6 +50,7 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
   <h2>Nouveau point</h2>
   <label for="pName">Nom du point (nom du dossier photos)</label>
   <input type="text" id="pName" autocomplete="off" placeholder="ex. POT-001">
+  <div id="custom"></div>
   <label for="pNote">Remarque</label>
   <textarea id="pNote" rows="3"></textarea>
   <div class="row">
@@ -76,6 +77,15 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
+
+/* ---------- Champs personnalisés : à modifier ici ----------
+   Liste déroulante : {id, label, options:[...]}   Texte libre : {id, label} */
+const FIELDS = [
+  {id: 'type', label: 'Type', options: ['Appui', 'Chambre', 'Boites', 'SRO', 'Immeuble', 'Villa']}
+];
+$('#custom').innerHTML = FIELDS.map(f => `<label for="f_${f.id}">${f.label}</label>` + (f.options
+  ? `<select id="f_${f.id}"><option value="">Choisir…</option>${f.options.map(o => `<option>${o}</option>`).join('')}</select>`
+  : `<input type="text" id="f_${f.id}" autocomplete="off">`)).join('');
 
 /* ---------- Stockage local (IndexedDB) ---------- */
 const DB = (() => {
@@ -141,7 +151,7 @@ $('#bCam').onclick = () => $('#iCam').click(); $('#bGal').onclick = () => $('#iG
 
 function newPoint(pos) {
   if (!pos) return alert('Position GPS non disponible. Touchez la carte pour placer le point à la main.');
-  target = pos; photos = []; thumbs(); $('#pName').value = ''; $('#pNote').value = '';
+  target = pos; photos = []; thumbs(); $('#pName').value = ''; $('#pNote').value = ''; FIELDS.forEach(f => $('#f_' + f.id).value = '');
   $('#fPoint').classList.add('on'); $('#pName').focus();
 }
 $('#bPoint').onclick = () => newPoint(me);
@@ -153,8 +163,10 @@ $('#pCancel').onclick = () => $('#fPoint').classList.remove('on');
 $('#pSave').onclick = async () => {
   const name = $('#pName').value.trim();
   if (!name) return alert('Saisissez un nom de point.');
+  const fv = {};
+  for (const f of FIELDS) { fv[f.id] = $('#f_' + f.id).value.trim(); if (f.options && !fv[f.id]) return alert('Choisissez : ' + f.label + '.'); }
   if ((await DB.all('points')).some(p => p.name === name)) return alert('Ce nom existe déjà. Choisissez un autre nom.');
-  await DB.put('points', {name, note: $('#pNote').value.trim(), lat: target.lat, lng: target.lng, acc: target.acc, alt: target.alt ?? null, t: new Date().toISOString(), photos});
+  await DB.put('points', {name, f: fv, note: $('#pNote').value.trim(), lat: target.lat, lng: target.lng, acc: target.acc, alt: target.alt ?? null, t: new Date().toISOString(), photos});
   $('#fPoint').classList.remove('on'); draw();
 };
 
@@ -182,7 +194,7 @@ async function draw() {
   T.forEach(t => L.polyline(t.pts.map(q => [q[1], q[0]]), {color: '#e4572e', weight: 4}).bindTooltip(t.name).addTo(layerTrk));
   $('#lPts').innerHTML = P.length ? '' : '<div class="vide">Aucun point. Touchez 📍 pour en créer un.</div>';
   P.forEach(p => { const d = document.createElement('div'); d.className = 'item';
-    d.innerHTML = `<div><b></b><small>${p.photos.length} photo(s) · ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</small></div><button>🗑</button>`;
+    d.innerHTML = `<div><b></b><small>${p.f && p.f.type ? p.f.type + ' · ' : ''}${p.photos.length} photo(s) · ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</small></div><button>🗑</button>`;
     d.querySelector('b').textContent = p.name;
     d.firstChild.onclick = () => { $('#fList').classList.remove('on'); map.setView([p.lat, p.lng], 19); };
     d.lastChild.onclick = async () => { if (confirm('Supprimer « ' + p.name + ' » ?')) { await DB.del('points', p.name); draw(); } };
@@ -203,16 +215,16 @@ const safe = s => s.replace(/[\\/:*?"<>|]/g, '_').trim() || 'point';
 $('#bExp').onclick = async () => {
   const P = await DB.all('points'), T = await DB.all('tracks');
   if (!P.length && !T.length) return alert('Rien à exporter.');
-  const z = new JSZip(), csv = ['nom;lat;lng;precision_m;altitude;date;remarque;nb_photos'];
+  const z = new JSZip(), csv = ['nom;' + FIELDS.map(f => f.id).join(';') + ';lat;lng;precision_m;altitude;date;remarque;nb_photos'];
   P.forEach(p => {
     const dir = z.folder(safe(p.name));
     p.photos.forEach((b, i) => dir.file(safe(p.name) + '_' + (i + 1) + '.jpg', b));
-    csv.push([p.name, p.lat, p.lng, p.acc ?? '', p.alt ?? '', p.t, (p.note || '').replace(/[;\n]/g, ' '), p.photos.length].join(';'));
+    csv.push([p.name, ...FIELDS.map(f => (p.f || {})[f.id] || ''), p.lat, p.lng, p.acc ?? '', p.alt ?? '', p.t, (p.note || '').replace(/[;\n]/g, ' '), p.photos.length].join(';'));
   });
   z.file('points.csv', csv.join('\n'));
   z.file('points.geojson', JSON.stringify({type: 'FeatureCollection', features: P.map(p => ({type: 'Feature',
     geometry: {type: 'Point', coordinates: [p.lng, p.lat]},
-    properties: {name: p.name, note: p.note, date: p.t, precision_m: p.acc, photos: p.photos.map((_, i) => safe(p.name) + '/' + safe(p.name) + '_' + (i + 1) + '.jpg')}}))}, null, 1));
+    properties: {name: p.name, ...(p.f || {}), note: p.note, date: p.t, precision_m: p.acc, photos: p.photos.map((_, i) => safe(p.name) + '/' + safe(p.name) + '_' + (i + 1) + '.jpg')}}))}, null, 1));
   z.file('trajets.geojson', JSON.stringify({type: 'FeatureCollection', features: T.map(t => ({type: 'Feature',
     geometry: {type: 'LineString', coordinates: t.pts.map(q => [q[0], q[1]])},
     properties: {name: t.name, date: t.t, longueur_m: Math.round(len(t.pts))}}))}, null, 1));
