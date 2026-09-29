@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12352b">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>Relevé terrain</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#12352b;--ink:#f4f7f2;--acc:#f2c230;--mut:#9db8ad;--line:#2a5646}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font:16px/1.4 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+#map{position:absolute;inset:0 0 72px 0}
+#bar{position:absolute;left:0;right:0;bottom:0;height:72px;padding-bottom:env(safe-area-inset-bottom);display:flex;background:var(--bg);border-top:2px solid var(--acc);z-index:1000}
+#bar button{flex:1;border:0;background:none;color:var(--ink);font:inherit;font-size:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+#bar button b{font-size:22px;font-weight:400}
+#bar button.rec{color:var(--acc)}
+#status{position:absolute;top:8px;left:8px;right:8px;z-index:1000;display:flex;justify-content:space-between;gap:8px;pointer-events:none}
+#status span{background:var(--bg);padding:4px 10px;border-radius:14px;font-size:13px}
+.sheet{position:fixed;inset:0;z-index:2000;background:var(--bg);overflow:auto;padding:16px;padding-top:calc(16px + env(safe-area-inset-top));display:none}
+.sheet.on{display:block}
+.sheet h2{margin:0 0 12px;font-size:20px}
+label{display:block;margin:12px 0 4px;color:var(--mut);font-size:14px}
+input[type=text],textarea{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#0c2620;color:var(--ink);font:inherit}
+.row{display:flex;gap:8px;margin-top:12px}
+.btn{flex:1;padding:12px;border-radius:6px;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;text-align:center}
+.btn.p{background:var(--acc);color:#12352b;border-color:var(--acc);font-weight:600}
+#thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+#thumbs img{width:72px;height:72px;object-fit:cover;border-radius:4px}
+.item{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.item div{flex:1}.item small{color:var(--mut);display:block}
+.item button{border:0;background:none;color:var(--mut);font-size:20px;padding:6px 10px}
+h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
+.vide{color:var(--mut);padding:12px 0}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="status"><span id="gps">GPS : recherche…</span><span id="rec" hidden></span></div>
+<nav id="bar">
+  <button id="bPoint"><b>📍</b>Point</button>
+  <button id="bTrack"><b>⏺</b><span id="tLbl">Trajet</span></button>
+  <button id="bList"><b>☰</b>Liste</button>
+  <button id="bExp"><b>⬇</b>Export</button>
+</nav>
+
+<section class="sheet" id="fPoint">
+  <h2>Nouveau point</h2>
+  <label for="pName">Nom du point (nom du dossier photos)</label>
+  <input type="text" id="pName" autocomplete="off" placeholder="ex. POT-001">
+  <label for="pNote">Remarque</label>
+  <textarea id="pNote" rows="3"></textarea>
+  <div class="row">
+    <button class="btn" id="bCam">📷 Prendre une photo</button>
+    <button class="btn" id="bGal">🖼 Galerie</button>
+  </div>
+  <input type="file" id="iCam" accept="image/*" capture="environment" hidden>
+  <input type="file" id="iGal" accept="image/*" multiple hidden>
+  <div id="thumbs"></div>
+  <div class="row">
+    <button class="btn" id="pCancel">Annuler</button>
+    <button class="btn p" id="pSave">Enregistrer le point</button>
+  </div>
+</section>
+
+<section class="sheet" id="fList">
+  <h2>Relevé</h2>
+  <h3>Points</h3><div id="lPts"></div>
+  <h3>Trajets</h3><div id="lTrk"></div>
+  <div class="row"><button class="btn p" id="lClose">Fermer</button></div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+
+/* ---------- Stockage local (IndexedDB) ---------- */
+const DB = (() => {
+  const open = new Promise((ok, ko) => {
+    const r = indexedDB.open('releve', 1);
+    r.onupgradeneeded = () => {
+      r.result.createObjectStore('points', {keyPath: 'name'});
+      r.result.createObjectStore('tracks', {keyPath: 'id', autoIncrement: true});
+    };
+    r.onsuccess = () => ok(r.result); r.onerror = ko;
+  });
+  const tx = async (s, m, f) => { const d = await open;
+    return new Promise((ok, ko) => { const t = d.transaction(s, m), q = f(t.objectStore(s));
+      t.oncomplete = () => ok(q.result); t.onerror = ko; }); };
+  return { all: s => tx(s, 'readonly', o => o.getAll()),
+           put: (s, v) => tx(s, 'readwrite', o => o.put(v)),
+           del: (s, k) => tx(s, 'readwrite', o => o.delete(k)) };
+})();
+
+/* ---------- Carte ---------- */
+const map = L.map('map', {zoomControl: false}).setView([34.0, 9.0], 6);
+const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'});
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom: 19, attribution: 'Esri'});
+plan.addTo(map);
+L.control.layers({'Plan': plan, 'Satellite': sat}, null, {position: 'topright'}).addTo(map);
+L.control.scale({imperial: false}).addTo(map);
+const layerPts = L.layerGroup().addTo(map), layerTrk = L.layerGroup().addTo(map);
+let me = null, meDot = null, first = true;
+
+/* ---------- GPS ---------- */
+let rec = null; // trajet en cours
+navigator.geolocation.watchPosition(p => {
+  me = {lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude};
+  $('#gps').textContent = 'GPS ±' + Math.round(me.acc) + ' m';
+  if (!meDot) meDot = L.circleMarker([me.lat, me.lng], {radius: 8, color: '#fff', weight: 2, fillColor: '#2b7fff', fillOpacity: 1}).addTo(map);
+  else meDot.setLatLng([me.lat, me.lng]);
+  if (first) { map.setView([me.lat, me.lng], 18); first = false; }
+  if (rec && me.acc < 50) {
+    const last = rec.pts[rec.pts.length - 1];
+    if (!last || map.distance([last[1], last[0]], [me.lat, me.lng]) > 3) {
+      rec.pts.push([me.lng, me.lat, Date.now()]);
+      rec.line.setLatLngs(rec.pts.map(q => [q[1], q[0]]));
+      $('#rec').textContent = '⏺ ' + rec.pts.length + ' pts · ' + Math.round(len(rec.pts)) + ' m';
+    }
+  }
+}, e => { $('#gps').textContent = 'GPS indisponible'; },
+{enableHighAccuracy: true, maximumAge: 2000, timeout: 20000});
+
+const len = pts => pts.reduce((s, q, i) => i ? s + map.distance([pts[i-1][1], pts[i-1][0]], [q[1], q[0]]) : 0, 0);
+
+/* ---------- Points ---------- */
+let photos = [], target = null;
+const thumbs = () => { $('#thumbs').innerHTML = ''; photos.forEach(b => { const i = new Image(); i.src = URL.createObjectURL(b); $('#thumbs').append(i); }); };
+const shrink = f => new Promise(ok => {
+  const img = new Image(); img.onload = () => {
+    const k = Math.min(1, 1920 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+    c.width = img.width * k; c.height = img.height * k; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    c.toBlob(b => ok(b || f), 'image/jpeg', 0.85); URL.revokeObjectURL(img.src); };
+  img.onerror = () => ok(f); img.src = URL.createObjectURL(f); });
+const addPhotos = async e => { for (const f of e.target.files) photos.push(await shrink(f)); e.target.value = ''; thumbs(); };
+$('#iCam').onchange = addPhotos; $('#iGal').onchange = addPhotos;
+$('#bCam').onclick = () => $('#iCam').click(); $('#bGal').onclick = () => $('#iGal').click();
+
+function newPoint(pos) {
+  if (!pos) return alert('Position GPS non disponible. Touchez la carte pour placer le point à la main.');
+  target = pos; photos = []; thumbs(); $('#pName').value = ''; $('#pNote').value = '';
+  $('#fPoint').classList.add('on'); $('#pName').focus();
+}
+$('#bPoint').onclick = () => newPoint(me);
+let clicked = null;
+map.on('click', e => { clicked = e.latlng; L.popup().setLatLng(clicked)
+  .setContent('<a href="#" id="hand">Créer un point ici</a>').openOn(map); });
+document.addEventListener('click', e => { if (e.target.id === 'hand') { e.preventDefault(); map.closePopup(); newPoint({lat: clicked.lat, lng: clicked.lng, acc: null}); } });
+$('#pCancel').onclick = () => $('#fPoint').classList.remove('on');
+$('#pSave').onclick = async () => {
+  const name = $('#pName').value.trim();
+  if (!name) return alert('Saisissez un nom de point.');
+  if ((await DB.all('points')).some(p => p.name === name)) return alert('Ce nom existe déjà. Choisissez un autre nom.');
+  await DB.put('points', {name, note: $('#pNote').value.trim(), lat: target.lat, lng: target.lng, acc: target.acc, alt: target.alt ?? null, t: new Date().toISOString(), photos});
+  $('#fPoint').classList.remove('on'); draw();
+};
+
+/* ---------- Trajets ---------- */
+$('#bTrack').onclick = async () => {
+  if (!rec) {
+    if (!me) return alert('Position GPS non disponible.');
+    rec = {pts: [], line: L.polyline([], {color: '#f2c230', weight: 5}).addTo(map), t0: new Date().toISOString()};
+    $('#bTrack').classList.add('rec'); $('#tLbl').textContent = 'Arrêter'; $('#rec').hidden = false; $('#rec').textContent = '⏺ 0 pts';
+  } else {
+    const r = rec; rec = null; map.removeLayer(r.line);
+    $('#bTrack').classList.remove('rec'); $('#tLbl').textContent = 'Trajet'; $('#rec').hidden = true;
+    if (r.pts.length < 2) return alert('Trajet trop court, non enregistré.');
+    const n = prompt('Nom du trajet :', 'Trajet ' + new Date().toLocaleString('fr-FR'));
+    if (n === null) return;
+    await DB.put('tracks', {name: n || 'Trajet', t: r.t0, pts: r.pts}); draw();
+  }
+};
+
+/* ---------- Affichage ---------- */
+async function draw() {
+  layerPts.clearLayers(); layerTrk.clearLayers();
+  const P = await DB.all('points'), T = await DB.all('tracks');
+  P.forEach(p => L.circleMarker([p.lat, p.lng], {radius: 9, color: '#12352b', weight: 2, fillColor: '#f2c230', fillOpacity: 1}).bindTooltip(p.name, {permanent: true, direction: 'top', offset: [0, -8]}).addTo(layerPts));
+  T.forEach(t => L.polyline(t.pts.map(q => [q[1], q[0]]), {color: '#e4572e', weight: 4}).bindTooltip(t.name).addTo(layerTrk));
+  $('#lPts').innerHTML = P.length ? '' : '<div class="vide">Aucun point. Touchez 📍 pour en créer un.</div>';
+  P.forEach(p => { const d = document.createElement('div'); d.className = 'item';
+    d.innerHTML = `<div><b></b><small>${p.photos.length} photo(s) · ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</small></div><button>🗑</button>`;
+    d.querySelector('b').textContent = p.name;
+    d.firstChild.onclick = () => { $('#fList').classList.remove('on'); map.setView([p.lat, p.lng], 19); };
+    d.lastChild.onclick = async () => { if (confirm('Supprimer « ' + p.name + ' » ?')) { await DB.del('points', p.name); draw(); } };
+    $('#lPts').append(d); });
+  $('#lTrk').innerHTML = T.length ? '' : '<div class="vide">Aucun trajet. Touchez ⏺ pour en enregistrer un.</div>';
+  T.forEach(t => { const d = document.createElement('div'); d.className = 'item';
+    d.innerHTML = `<div><b></b><small>${Math.round(len(t.pts))} m · ${t.pts.length} points</small></div><button>🗑</button>`;
+    d.querySelector('b').textContent = t.name;
+    d.firstChild.onclick = () => { $('#fList').classList.remove('on'); map.fitBounds(t.pts.map(q => [q[1], q[0]])); };
+    d.lastChild.onclick = async () => { if (confirm('Supprimer « ' + t.name + ' » ?')) { await DB.del('tracks', t.id); draw(); } };
+    $('#lTrk').append(d); });
+}
+$('#bList').onclick = () => $('#fList').classList.add('on');
+$('#lClose').onclick = () => $('#fList').classList.remove('on');
+
+/* ---------- Export ZIP : un dossier par point ---------- */
+const safe = s => s.replace(/[\\/:*?"<>|]/g, '_').trim() || 'point';
+$('#bExp').onclick = async () => {
+  const P = await DB.all('points'), T = await DB.all('tracks');
+  if (!P.length && !T.length) return alert('Rien à exporter.');
+  const z = new JSZip(), csv = ['nom;lat;lng;precision_m;altitude;date;remarque;nb_photos'];
+  P.forEach(p => {
+    const dir = z.folder(safe(p.name));
+    p.photos.forEach((b, i) => dir.file(safe(p.name) + '_' + (i + 1) + '.jpg', b));
+    csv.push([p.name, p.lat, p.lng, p.acc ?? '', p.alt ?? '', p.t, (p.note || '').replace(/[;\n]/g, ' '), p.photos.length].join(';'));
+  });
+  z.file('points.csv', csv.join('\n'));
+  z.file('points.geojson', JSON.stringify({type: 'FeatureCollection', features: P.map(p => ({type: 'Feature',
+    geometry: {type: 'Point', coordinates: [p.lng, p.lat]},
+    properties: {name: p.name, note: p.note, date: p.t, precision_m: p.acc, photos: p.photos.map((_, i) => safe(p.name) + '/' + safe(p.name) + '_' + (i + 1) + '.jpg')}}))}, null, 1));
+  z.file('trajets.geojson', JSON.stringify({type: 'FeatureCollection', features: T.map(t => ({type: 'Feature',
+    geometry: {type: 'LineString', coordinates: t.pts.map(q => [q[0], q[1]])},
+    properties: {name: t.name, date: t.t, longueur_m: Math.round(len(t.pts))}}))}, null, 1));
+  const blob = await z.generateAsync({type: 'blob'}), fn = 'releve_' + new Date().toISOString().slice(0, 10) + '.zip';
+  const file = new File([blob], fn, {type: 'application/zip'});
+  if (navigator.canShare && navigator.canShare({files: [file]})) { try { await navigator.share({files: [file]}); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fn; a.click();
+};
+
+draw();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
