@@ -83,17 +83,6 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
   <div class="row"><button class="btn" id="gClose">Fermer</button><button class="btn p" id="gRetry">Réessayer</button></div>
 </section>
 
-<section class="sheet" id="fExp">
-  <h2>Exporter</h2>
-  <button class="btn p" id="xZip" style="width:100%">ZIP complet</button>
-  <div class="vide">Un dossier par point, avec CSV et GeoJSON pour QGIS.</div>
-  <button class="btn" id="xKmz" style="width:100%">KMZ avec photos</button>
-  <div class="vide">Pour Google Earth : points, trajets et photos intégrées.</div>
-  <button class="btn" id="xKml" style="width:100%">KML sans photos</button>
-  <div class="vide">Fichier léger : points et trajets seulement.</div>
-  <div class="row"><button class="btn" id="xCancel">Annuler</button></div>
-</section>
-
 <section class="sheet" id="fMode">
   <h2>Nouveau trajet</h2>
   <button class="btn p" id="mAuto" style="width:100%">Automatique : suivre le GPS</button>
@@ -287,13 +276,13 @@ async function draw() {
 $('#bList').onclick = () => $('#fList').classList.add('on');
 $('#lClose').onclick = () => $('#fList').classList.remove('on');
 
-/* ---------- Export : ZIP, KMZ, KML ---------- */
+/* ---------- Export : un seul ZIP (dossier avec photos, CSV, GeoJSON, KMZ) ---------- */
 const safe = s => s.replace(/[\\/:*?"<>|]/g, '_').trim() || 'point';
 const day = () => new Date().toISOString().slice(0, 10);
-async function exportZip() {
+async function exportAll() {
   const P = await DB.all('points'), T = await DB.all('tracks');
   if (!P.length && !T.length) return alert('Rien à exporter.');
-  const z = new JSZip(), csv = ['nom;' + FIELDS.map(f => f.id).join(';') + ';lat;lng;precision_m;altitude;date;remarque;nb_photos'];
+  const out = new JSZip(), z = out.folder('releve_' + day()), csv = ['nom;' + FIELDS.map(f => f.id).join(';') + ';lat;lng;precision_m;altitude;date;remarque;nb_photos'];
   P.forEach(p => {
     const dir = z.folder(safe(p.name));
     p.photos.forEach((b, i) => dir.file(safe(p.name) + '_' + (i + 1) + '.jpg', b));
@@ -314,7 +303,8 @@ async function exportZip() {
   z.file('trajets.geojson', JSON.stringify({type: 'FeatureCollection', features: T.map(t => ({type: 'Feature',
     geometry: {type: 'LineString', coordinates: t.pts.map(q => [q[0], q[1]])},
     properties: {name: t.name, date: t.t, mode: t.mode || 'auto', longueur_m: Math.round(len(t.pts)), nb_photos: (t.photos || []).length}}))}, null, 1));
-  await deliver(await z.generateAsync({type: 'blob'}), 'releve_' + day() + '.zip', 'application/zip');
+  z.file('releve.kmz', await buildKmz(P, T));
+  await deliver(await out.generateAsync({type: 'blob'}), 'releve_' + day() + '.zip', 'application/zip');
 }
 
 async function deliver(blob, fn, type) {
@@ -324,11 +314,9 @@ async function deliver(blob, fn, type) {
 }
 
 const esc = v => String(v ?? '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
-async function exportKml(withPhotos) {
-  const P = await DB.all('points'), T = await DB.all('tracks');
-  if (!P.length && !T.length) return alert('Rien à exporter.');
+async function buildKmz(P, T) {
   const z = new JSZip(), used = new Set(), pm = [], tk = [], ph = [];
-  const img = (fn, blob) => { if (!withPhotos) return ''; z.file(fn, blob); return `<img src="${encodeURI(fn).replace(/&/g, '%26')}" width="400"/><br/>`; };
+  const img = (fn, blob) => { z.file(fn, blob); return `<img src="${encodeURI(fn).replace(/&/g, '%26')}" width="400"/><br/>`; };
   P.forEach(p => {
     const d = safe(p.name), fl = p.f || {};
     const pics = p.photos.map((b, i) => img('files/' + d + '/' + d + '_' + (i + 1) + '.jpg', b)).join('');
@@ -346,16 +334,15 @@ async function exportKml(withPhotos) {
     `<Style id="pt"><IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href></Icon></IconStyle></Style>` +
     `<Style id="ln"><LineStyle><color>ff2e57e4</color><width>4</width></LineStyle></Style>` +
     folder('Points', pm) + folder('Trajets', tk) + folder('Photos des trajets', ph) + `</Document></kml>`;
-  if (!withPhotos) return deliver(new Blob([doc], {type: 'application/vnd.google-earth.kml+xml'}), 'releve_' + day() + '.kml', 'application/vnd.google-earth.kml+xml');
   z.file('doc.kml', doc);
-  await deliver(await z.generateAsync({type: 'blob', mimeType: 'application/vnd.google-earth.kmz'}), 'releve_' + day() + '.kmz', 'application/vnd.google-earth.kmz');
+  return z.generateAsync({type: 'blob', mimeType: 'application/vnd.google-earth.kmz'});
 }
 
-$('#bExp').onclick = () => $('#fExp').classList.add('on');
-$('#xCancel').onclick = () => $('#fExp').classList.remove('on');
-$('#xZip').onclick = () => { $('#fExp').classList.remove('on'); exportZip(); };
-$('#xKmz').onclick = () => { $('#fExp').classList.remove('on'); exportKml(true); };
-$('#xKml').onclick = () => { $('#fExp').classList.remove('on'); exportKml(false); };
+$('#bExp').onclick = async () => {
+  const b = $('#bExp'); b.disabled = true; b.querySelector('b').textContent = '⏳';
+  try { await exportAll(); } catch (e) { alert('Export impossible : ' + e.message); }
+  b.disabled = false; b.querySelector('b').textContent = '⬇';
+};
 
 draw();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
