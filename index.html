@@ -36,12 +36,14 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 #trkBar{position:absolute;left:8px;right:8px;bottom:80px;z-index:1000;display:flex;gap:8px}
 #trkBar[hidden]{display:none}
 #trkBar .btn{background:var(--bg);border-color:var(--acc)}
+#bGps{position:absolute;top:46px;left:8px;z-index:1000;background:var(--bg);color:var(--ink);border:1px solid var(--acc);border-radius:18px;padding:6px 12px;font:inherit;font-size:14px}
 .vide{color:var(--mut);padding:12px 0}
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="status"><span id="gps">GPS : recherche…</span><span id="rec" hidden></span></div>
+<button id="bGps">📡 Activer le GPS</button>
 <div id="trkBar" hidden>
   <button class="btn" id="tPhoto">📷 Photo ici</button>
   <button class="btn" id="tUndo" hidden>↶ Annuler le dernier point</button>
@@ -72,6 +74,24 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
     <button class="btn" id="pCancel">Annuler</button>
     <button class="btn p" id="pSave">Enregistrer le point</button>
   </div>
+</section>
+
+<section class="sheet" id="fGps">
+  <h2>Activer le GPS</h2>
+  <div class="vide" id="gMsg"></div>
+  <div class="vide">Une application web ne peut pas ouvrir elle-même les paramètres d'Android : suis les étapes ci-dessus, puis reviens ici.</div>
+  <div class="row"><button class="btn" id="gClose">Fermer</button><button class="btn p" id="gRetry">Réessayer</button></div>
+</section>
+
+<section class="sheet" id="fExp">
+  <h2>Exporter</h2>
+  <button class="btn p" id="xZip" style="width:100%">ZIP complet</button>
+  <div class="vide">Un dossier par point, avec CSV et GeoJSON pour QGIS.</div>
+  <button class="btn" id="xKmz" style="width:100%">KMZ avec photos</button>
+  <div class="vide">Pour Google Earth : points, trajets et photos intégrées.</div>
+  <button class="btn" id="xKml" style="width:100%">KML sans photos</button>
+  <div class="vide">Fichier léger : points et trajets seulement.</div>
+  <div class="row"><button class="btn" id="xCancel">Annuler</button></div>
 </section>
 
 <section class="sheet" id="fMode">
@@ -126,15 +146,17 @@ const DB = (() => {
 const map = L.map('map', {zoomControl: false}).setView([34.0, 9.0], 6);
 const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'});
 const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom: 19, attribution: 'Esri'});
-plan.addTo(map);
-L.control.layers({'Plan': plan, 'Satellite': sat}, null, {position: 'topright'}).addTo(map);
+sat.addTo(map);
+L.control.layers({'Satellite': sat, 'Plan': plan}, null, {position: 'topright'}).addTo(map);
 L.control.scale({imperial: false}).addTo(map);
 const layerPts = L.layerGroup().addTo(map), layerTrk = L.layerGroup().addTo(map);
 let me = null, meDot = null, first = true;
 
 /* ---------- GPS ---------- */
 let rec = null; // trajet en cours
-navigator.geolocation.watchPosition(p => {
+let wid = null, gpsErr = 0;
+const onPos = p => {
+  gpsErr = 0; $('#bGps').textContent = '🎯';
   me = {lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude};
   $('#gps').textContent = 'GPS ±' + Math.round(me.acc) + ' m';
   if (!meDot) meDot = L.circleMarker([me.lat, me.lng], {radius: 8, color: '#fff', weight: 2, fillColor: '#2b7fff', fillOpacity: 1}).addTo(map);
@@ -148,8 +170,23 @@ navigator.geolocation.watchPosition(p => {
       recStatus();
     }
   }
-}, e => { $('#gps').textContent = 'GPS indisponible'; },
-{enableHighAccuracy: true, maximumAge: 2000, timeout: 20000});
+};
+const onErr = e => { gpsErr = e.code; $('#gps').textContent = 'GPS indisponible'; $('#bGps').textContent = '📡 Activer le GPS'; };
+function startGps() {
+  if (wid !== null) navigator.geolocation.clearWatch(wid);
+  $('#gps').textContent = 'GPS : recherche…';
+  wid = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy: true, maximumAge: 2000, timeout: 20000});
+}
+startGps();
+$('#bGps').onclick = () => {
+  if (me && !gpsErr) return map.setView([me.lat, me.lng], Math.max(map.getZoom(), 18));
+  $('#gMsg').innerHTML = gpsErr === 1
+    ? "<b>La position est refusée pour cette application.</b><br>Dans Chrome : touche ⋮ → Paramètres → Paramètres des sites → Localisation → autorise ce site. Application installée : appui long sur l'icône → Infos sur l'application → Autorisations → Position → Autoriser."
+    : "<b>Le GPS du téléphone est désactivé ou sans signal.</b><br>Glisse le volet rapide vers le bas et touche « Localisation » (ou Paramètres → Localisation → Activer). Mets-toi à l'extérieur si besoin.";
+  $('#fGps').classList.add('on');
+};
+$('#gClose').onclick = () => $('#fGps').classList.remove('on');
+$('#gRetry').onclick = () => { $('#fGps').classList.remove('on'); startGps(); };
 
 const len = pts => pts.reduce((s, q, i) => i ? s + map.distance([pts[i-1][1], pts[i-1][0]], [q[1], q[0]]) : 0, 0);
 
@@ -250,9 +287,10 @@ async function draw() {
 $('#bList').onclick = () => $('#fList').classList.add('on');
 $('#lClose').onclick = () => $('#fList').classList.remove('on');
 
-/* ---------- Export ZIP : un dossier par point ---------- */
+/* ---------- Export : ZIP, KMZ, KML ---------- */
 const safe = s => s.replace(/[\\/:*?"<>|]/g, '_').trim() || 'point';
-$('#bExp').onclick = async () => {
+const day = () => new Date().toISOString().slice(0, 10);
+async function exportZip() {
   const P = await DB.all('points'), T = await DB.all('tracks');
   if (!P.length && !T.length) return alert('Rien à exporter.');
   const z = new JSZip(), csv = ['nom;' + FIELDS.map(f => f.id).join(';') + ';lat;lng;precision_m;altitude;date;remarque;nb_photos'];
@@ -276,11 +314,48 @@ $('#bExp').onclick = async () => {
   z.file('trajets.geojson', JSON.stringify({type: 'FeatureCollection', features: T.map(t => ({type: 'Feature',
     geometry: {type: 'LineString', coordinates: t.pts.map(q => [q[0], q[1]])},
     properties: {name: t.name, date: t.t, mode: t.mode || 'auto', longueur_m: Math.round(len(t.pts)), nb_photos: (t.photos || []).length}}))}, null, 1));
-  const blob = await z.generateAsync({type: 'blob'}), fn = 'releve_' + new Date().toISOString().slice(0, 10) + '.zip';
-  const file = new File([blob], fn, {type: 'application/zip'});
+  await deliver(await z.generateAsync({type: 'blob'}), 'releve_' + day() + '.zip', 'application/zip');
+}
+
+async function deliver(blob, fn, type) {
+  const file = new File([blob], fn, {type});
   if (navigator.canShare && navigator.canShare({files: [file]})) { try { await navigator.share({files: [file]}); return; } catch (e) { if (e.name === 'AbortError') return; } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fn; a.click();
-};
+}
+
+const esc = v => String(v ?? '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+async function exportKml(withPhotos) {
+  const P = await DB.all('points'), T = await DB.all('tracks');
+  if (!P.length && !T.length) return alert('Rien à exporter.');
+  const z = new JSZip(), used = new Set(), pm = [], tk = [], ph = [];
+  const img = (fn, blob) => { if (!withPhotos) return ''; z.file(fn, blob); return `<img src="${encodeURI(fn).replace(/&/g, '%26')}" width="400"/><br/>`; };
+  P.forEach(p => {
+    const d = safe(p.name), fl = p.f || {};
+    const pics = p.photos.map((b, i) => img('files/' + d + '/' + d + '_' + (i + 1) + '.jpg', b)).join('');
+    pm.push(`<Placemark><name>${esc(p.name)}</name><styleUrl>#pt</styleUrl><description><![CDATA[${pics}${esc(p.note)}]]></description>` +
+      `<ExtendedData>${FIELDS.map(f => `<Data name="${f.id}"><value>${esc(fl[f.id])}</value></Data>`).join('')}<Data name="date"><value>${p.t}</value></Data></ExtendedData>` +
+      `<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`);
+  });
+  T.forEach(t => {
+    let d = safe(t.name); if (used.has(d)) d += '_' + t.id; used.add(d);
+    tk.push(`<Placemark><name>${esc(t.name)}</name><styleUrl>#ln</styleUrl><description>${Math.round(len(t.pts))} m</description><LineString><tessellate>1</tessellate><coordinates>${t.pts.map(q => q[0] + ',' + q[1] + ',0').join(' ')}</coordinates></LineString></Placemark>`);
+    (t.photos || []).forEach((h, i) => ph.push(`<Placemark><name>${esc(t.name)} - photo ${i + 1}</name><styleUrl>#pt</styleUrl><description><![CDATA[${img('files/trajets/' + d + '/' + d + '_' + (i + 1) + '.jpg', h.blob)}]]></description><Point><coordinates>${h.lng},${h.lat},0</coordinates></Point></Placemark>`));
+  });
+  const folder = (n, a) => a.length ? `<Folder><name>${n}</name>${a.join('')}</Folder>` : '';
+  const doc = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Relevé terrain ${day()}</name>` +
+    `<Style id="pt"><IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href></Icon></IconStyle></Style>` +
+    `<Style id="ln"><LineStyle><color>ff2e57e4</color><width>4</width></LineStyle></Style>` +
+    folder('Points', pm) + folder('Trajets', tk) + folder('Photos des trajets', ph) + `</Document></kml>`;
+  if (!withPhotos) return deliver(new Blob([doc], {type: 'application/vnd.google-earth.kml+xml'}), 'releve_' + day() + '.kml', 'application/vnd.google-earth.kml+xml');
+  z.file('doc.kml', doc);
+  await deliver(await z.generateAsync({type: 'blob', mimeType: 'application/vnd.google-earth.kmz'}), 'releve_' + day() + '.kmz', 'application/vnd.google-earth.kmz');
+}
+
+$('#bExp').onclick = () => $('#fExp').classList.add('on');
+$('#xCancel').onclick = () => $('#fExp').classList.remove('on');
+$('#xZip').onclick = () => { $('#fExp').classList.remove('on'); exportZip(); };
+$('#xKmz').onclick = () => { $('#fExp').classList.remove('on'); exportKml(true); };
+$('#xKml').onclick = () => { $('#fExp').classList.remove('on'); exportKml(false); };
 
 draw();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
