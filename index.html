@@ -9,7 +9,7 @@
 <title>Relevé terrain</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
-:root{--bg:#12352b;--ink:#f4f7f2;--acc:#f2c230;--mut:#9db8ad;--line:#2a5646}
+:root{--bg:#12352b;--ink:#f4f7f2;--acc:#4fc3f7;--mut:#9db8ad;--line:#2a5646}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;font:16px/1.4 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 #map{position:absolute;inset:0 0 72px 0}
@@ -40,11 +40,8 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 .bar2{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--acc);border-radius:8px;padding:8px}
 .bar2 span{flex:1;font-size:14px}
 .bar2 .btn{flex:none;padding:8px 12px}
-#fPoint{inset:auto 0 0 0;max-height:56%;padding:12px 16px calc(8px + env(safe-area-inset-bottom));border-top:2px solid var(--acc);border-radius:14px 14px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.45)}
-#fPoint h2{font-size:17px;margin-bottom:6px}
-#fPoint>.row:last-child{position:sticky;bottom:0;background:var(--bg);padding:10px 0 4px;margin-top:8px}
 .leaflet-popup-content a{display:inline-block;padding:10px 6px;font-size:16px}
-.vtx{background:#f2c230;border:3px solid #12352b;border-radius:50%}
+.vtx{background:#4fc3f7;border:3px solid #12352b;border-radius:50%}
 #trkBar .btn{background:var(--bg);border-color:var(--acc)}
 #thumbs .th{position:relative}
 #thumbs .th b{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;background:#e4572e;color:#fff;font:700 14px/24px sans-serif;text-align:center}
@@ -211,7 +208,7 @@ $('#gRetry').onclick = () => { $('#fGps').classList.remove('on'); startGps(); };
 const len = pts => pts.reduce((s, q, i) => i ? s + map.distance([pts[i-1][1], pts[i-1][0]], [q[1], q[0]]) : 0, 0);
 
 /* ---------- Points ---------- */
-let items = [], jobs = [], target = null, editing = null, tmp = null;  // items : photos du formulaire
+let items = [], jobs = [], target = null, editing = null;  // items : photos du formulaire
 const thumbs = () => {
   const box = $('#thumbs'); box.innerHTML = '';
   items.forEach((it, i) => {
@@ -237,23 +234,10 @@ const addPhotos = e => {  // la photo apparaît tout de suite ; la réduction se
 $('#iCam').onchange = addPhotos; $('#iGal').onchange = addPhotos;
 $('#bCam').onclick = () => $('#iCam').click(); $('#bGal').onclick = () => $('#iGal').click();
 
-function showTmp() {  // repère de la position pendant que le formulaire est ouvert
-  if (!target || (editing && editing.kind === 'track') || !$('#fPoint').classList.contains('on')) return;
-  if (!tmp) tmp = L.circleMarker([target.lat, target.lng], {radius: 11, color: '#fff', weight: 3, fillColor: '#f2c230', fillOpacity: 1, interactive: false}).addTo(map);
-  else tmp.setLatLng([target.lat, target.lng]);
-}
-function hideTmp() { if (tmp) { map.removeLayer(tmp); tmp = null; } }
-function revealTarget() {  // recentre la carte si le point est caché sous le panneau
-  try {
-    const size = map.getSize(), vis = size.y - Math.max(0, $('#fPoint').offsetHeight - 72), px = map.latLngToContainerPoint([target.lat, target.lng]);
-    if (px.y > vis - 40 || px.y < 20 || px.x < 20 || px.x > size.x - 20) map.panBy([px.x - size.x / 2, px.y - vis / 2]);
-  } catch (e) {}
-}
 const showPos = () => {
   const tr = editing && editing.kind === 'track', pts = tr ? (editing.pts || editing.rec.pts) : null;
   $('#pPos').textContent = tr ? 'Tracé : ' + pts.length + ' sommets · ' + Math.round(len(pts)) + ' m'
     : target ? 'Position : ' + target.lat.toFixed(6) + ', ' + target.lng.toFixed(6) : '';
-  showTmp();
 };
 function openForm(o) {
   jobs = [];
@@ -262,7 +246,6 @@ function openForm(o) {
   $('#custom').hidden = !!o.track; $('#pLoc').hidden = !o.gps; $('#pTrk').hidden = !o.track; showPos();
   $('#pSave').textContent = editing ? 'Enregistrer les modifications' : 'Enregistrer le point';
   thumbs(); $('#fPoint').classList.add('on');
-  if (!o.track) { showTmp(); setTimeout(revealTarget, 60); }
 }
 function newPoint(pos) {
   if (!pos) return alert('Position GPS non disponible. Touchez la carte pour placer le point à la main.');
@@ -289,7 +272,7 @@ $('#ptGps').onclick = () => { setMode(null); newPoint(me); };
 $('#ptOff').onclick = () => setMode(null);
 map.on('click', e => {
   const ll = e.latlng;
-  if (mv || $('#fPoint').classList.contains('on')) return;  // formulaire ouvert : la carte reste consultable
+  if (mv) return;
   if (geo) { geo.pts.push([ll.lng, ll.lat, Date.now()]); return drawGeo(); }
   if (mapMode === 'point') {  // confirmation de la position avant l'ajout
     pend = ll;
@@ -304,11 +287,11 @@ document.addEventListener('click', e => {
 
 /* Déplacer un point en le glissant sur la carte */
 $('#pMap').onclick = () => {
-  hideTmp(); $('#fPoint').classList.remove('on'); map.removeLayer(layerPts);
+  $('#fPoint').classList.remove('on'); map.removeLayer(layerPts);
   mv = {m: L.marker([target.lat, target.lng], {draggable: true, icon: L.divIcon({className: 'vtx', iconSize: [26, 26]})}).addTo(map)};
   map.setView([target.lat, target.lng], Math.max(map.getZoom(), 18)); $('#mvBar').hidden = false;
 };
-function endMv() { map.removeLayer(mv.m); mv = null; $('#mvBar').hidden = true; layerPts.addTo(map); $('#fPoint').classList.add('on'); showTmp(); }
+function endMv() { map.removeLayer(mv.m); mv = null; $('#mvBar').hidden = true; layerPts.addTo(map); $('#fPoint').classList.add('on'); }
 $('#mOk').onclick = () => { const l = mv.m.getLatLng(); target = {lat: l.lat, lng: l.lng, acc: null}; endMv(); showPos(); };
 $('#mNo').onclick = endMv;
 
@@ -325,12 +308,12 @@ function endGeo() { map.removeLayer(geo.line); map.removeLayer(geo.marks); geo =
 $('#pShape').onclick = () => {
   const pts = (editing.pts || editing.rec.pts).map(q => q.slice());
   $('#fPoint').classList.remove('on'); map.removeLayer(layerTrk);
-  geo = {pts, line: L.polyline([], {color: '#f2c230', weight: 5, interactive: false}).addTo(map), marks: L.layerGroup().addTo(map)};
+  geo = {pts, line: L.polyline([], {color: '#4fc3f7', weight: 5, interactive: false}).addTo(map), marks: L.layerGroup().addTo(map)};
   drawGeo(); map.fitBounds(pts.map(q => [q[1], q[0]]), {padding: [40, 40]}); $('#geoBar').hidden = false;
 };
 $('#gOk').onclick = () => { editing.pts = geo.pts; endGeo(); showPos(); };
 $('#gNo').onclick = endGeo;
-$('#pCancel').onclick = () => { $('#fPoint').classList.remove('on'); editing = null; hideTmp(); };
+$('#pCancel').onclick = () => { $('#fPoint').classList.remove('on'); editing = null; };
 $('#pSave').onclick = async () => {
   const name = $('#pName').value.trim();
   if (!name) return alert('Saisissez un nom.');
@@ -354,7 +337,7 @@ $('#pSave').onclick = async () => {
     await DB.put('points', pt);
     if (ed) rmDir('Points/' + safe(ed.name)).then(() => savePointFiles(pt)); else savePointFiles(pt);
   }
-  $('#fPoint').classList.remove('on'); editing = null; hideTmp(); draw();
+  $('#fPoint').classList.remove('on'); editing = null; draw();
 };
 
 /* ---------- Trajets : automatique (GPS) ou manuel (carte), photos en option ---------- */
@@ -371,7 +354,7 @@ function startTrack(mode) {
   $('#fMode').classList.remove('on');
   if (mode === 'auto' && !me) return alert('Position GPS non disponible.');
   rec = {mode, pts: [], photos: [], jobs: [], t0: new Date().toISOString(),
-         line: L.polyline([], {color: '#f2c230', weight: 5}).addTo(map), marks: L.layerGroup().addTo(map)};
+         line: L.polyline([], {color: '#4fc3f7', weight: 5}).addTo(map), marks: L.layerGroup().addTo(map)};
   $('#bTrack').classList.add('rec'); $('#tLbl').textContent = 'Arrêter';
   $('#rec').hidden = false; $('#trkBar').hidden = false; $('#tUndo').hidden = mode !== 'manual';
   recStatus();
@@ -423,7 +406,7 @@ async function recoverDraft() {
 async function draw() {
   layerPts.clearLayers(); layerTrk.clearLayers();
   const P = await DB.all('points'), T = await DB.all('tracks');
-  P.forEach(p => L.circleMarker([p.lat, p.lng], {radius: 9, color: '#12352b', weight: 2, fillColor: '#f2c230', fillOpacity: 1, bubblingMouseEvents: false}).bindTooltip(p.name, {permanent: true, direction: 'top', offset: [0, -8]}).on('click', e => busy() ? map.fire('click', {latlng: e.latlng}) : editPoint(p)).addTo(layerPts));
+  P.forEach(p => L.circleMarker([p.lat, p.lng], {radius: 9, color: '#12352b', weight: 2, fillColor: '#4fc3f7', fillOpacity: 1, bubblingMouseEvents: false}).bindTooltip(p.name, {permanent: true, direction: 'top', offset: [0, -8]}).on('click', e => busy() ? map.fire('click', {latlng: e.latlng}) : editPoint(p)).addTo(layerPts));
   T.forEach(t => {
     const ll = t.pts.map(q => [q[1], q[0]]);
     L.polyline(ll, {color: '#e4572e', weight: 4, interactive: false}).addTo(layerTrk);
@@ -570,7 +553,7 @@ async function buildKmz(P, T) {
   });
   const folder = (n, a) => a.length ? `<Folder><name>${n}</name>${a.join('')}</Folder>` : '';
   const doc = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Relevé terrain ${day()}</name>` +
-    `<Style id="pt"><IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href></Icon></IconStyle></Style>` +
+    `<Style id="pt"><IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png</href></Icon></IconStyle></Style>` +
     `<Style id="ln"><LineStyle><color>ff2e57e4</color><width>4</width></LineStyle></Style>` +
     folder('Points', pm) + folder('Trajets', tk) + folder('Photos des trajets', ph) + `</Document></kml>`;
   z.file('doc.kml', doc);
