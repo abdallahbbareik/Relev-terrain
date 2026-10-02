@@ -269,7 +269,8 @@ function setMode(m) {
   mapMode = m; $('#bPoint').classList.toggle('rec', m === 'point'); $('#ptBar').hidden = !m;
   $('#ptMsg').textContent = "Touchez la carte à l'emplacement du point"; if (!m) map.closePopup();
 }
-$('#bPoint').onclick = () => setMode(mapMode === 'point' ? null : 'point');
+const editBusy = () => { if (geo || mv) { alert("Terminez d'abord la modification en cours (✔ ou ✕)."); return true; } };
+$('#bPoint').onclick = () => { if (editBusy()) return; setMode(mapMode === 'point' ? null : 'point'); };
 $('#ptGps').onclick = () => { setMode(null); newPoint(me); };
 $('#ptOff').onclick = () => setMode(null);
 map.on('click', e => {
@@ -361,7 +362,12 @@ function startTrack(mode) {
   $('#rec').hidden = false; $('#trkBar').hidden = false; $('#tUndo').hidden = mode !== 'manual';
   recStatus();
 }
-$('#bTrack').onclick = () => rec ? stopTrack() : $('#fMode').classList.add('on');
+$('#bTrack').onclick = () => {
+  if (rec) return stopTrack();
+  if (editBusy()) return;
+  setMode(null);  // un seul événement à la fois : le mode « point » est désélectionné
+  $('#fMode').classList.add('on');
+};
 $('#mAuto').onclick = () => startTrack('auto'); $('#mMan').onclick = () => startTrack('manual');
 $('#mCancel').onclick = () => $('#fMode').classList.remove('on');
 $('#tPhoto').onclick = () => $('#iTrk').click();
