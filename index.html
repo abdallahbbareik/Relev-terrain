@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#4fc3f7">
+<meta name="theme-color" content="#b1b1b5">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <title>Relevé terrain</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
-:root{--bg:#4fc3f7;--ink:#062a3d;--acc:#0b5a8a;--mut:#0d4f73;--line:#2e9ccc}
+:root{--bg:#b1b1b5;--ink:#062a3d;--acc:#0b5a8a;--mut:#0d4f73;--line:#1e1e21}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0;font:16px/1.4 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 #map{position:absolute;inset:0 0 72px 0}
 #bar{position:absolute;left:0;right:0;bottom:0;height:72px;padding-bottom:env(safe-area-inset-bottom);display:flex;background:var(--bg);border-top:2px solid var(--acc);z-index:1000}
@@ -26,6 +27,7 @@ label{display:block;margin:12px 0 4px;color:var(--mut);font-size:14px}
 input[type=text],textarea,select{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#eaf8ff;color:var(--ink);font:inherit}
 .row{display:flex;gap:8px;margin-top:12px}
 .btn{flex:1;padding:12px;border-radius:6px;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;text-align:center}
+.btn.pic{background:#4fc3f7;color:var(--ink);border-color:var(--line)}
 .btn.p{background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}
 #thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 #thumbs img{width:72px;height:72px;object-fit:cover;border-radius:4px}
@@ -82,8 +84,8 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
   <label for="pNote">Remarque</label>
   <textarea id="pNote" rows="3"></textarea>
   <div class="row">
-    <button class="btn" id="bCam">📷 Prendre une photo</button>
-    <button class="btn" id="bGal">🖼 Galerie</button>
+    <button class="btn pic" id="bCam">📷 Prendre une photo</button>
+    <button class="btn pic" id="bGal">🖼 Galerie</button>
   </div>
   <input type="file" id="iCam" accept="image/*" capture="environment" hidden>
   <input type="file" id="iGal" accept="image/*" multiple hidden>
@@ -250,7 +252,7 @@ function openForm(o) {
 function newPoint(pos) {
   if (!pos) return alert('Position GPS non disponible. Touchez la carte pour placer le point à la main.');
   editing = null; target = pos; items = [];
-  openForm({title: 'Nouveau point'}); $('#pName').focus();
+  openForm({title: 'Nouveau point', gps: true}); $('#pName').focus();
 }
 function editPoint(p) {
   editing = {kind: 'point', rec: p}; target = {lat: p.lat, lng: p.lng, acc: p.acc, alt: p.alt};
