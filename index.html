@@ -40,6 +40,9 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 .bar2{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--acc);border-radius:8px;padding:8px}
 .bar2 span{flex:1;font-size:14px}
 .bar2 .btn{flex:none;padding:8px 12px}
+#fPoint{inset:auto 0 0 0;max-height:56%;padding:12px 16px calc(8px + env(safe-area-inset-bottom));border-top:2px solid var(--acc);border-radius:14px 14px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.45)}
+#fPoint h2{font-size:17px;margin-bottom:6px}
+#fPoint>.row:last-child{position:sticky;bottom:0;background:var(--bg);padding:10px 0 4px;margin-top:8px}
 .leaflet-popup-content a{display:inline-block;padding:10px 6px;font-size:16px}
 .vtx{background:#f2c230;border:3px solid #12352b;border-radius:50%}
 #trkBar .btn{background:var(--bg);border-color:var(--acc)}
@@ -208,7 +211,7 @@ $('#gRetry').onclick = () => { $('#fGps').classList.remove('on'); startGps(); };
 const len = pts => pts.reduce((s, q, i) => i ? s + map.distance([pts[i-1][1], pts[i-1][0]], [q[1], q[0]]) : 0, 0);
 
 /* ---------- Points ---------- */
-let items = [], jobs = [], target = null, editing = null;  // items : photos du formulaire
+let items = [], jobs = [], target = null, editing = null, tmp = null;  // items : photos du formulaire
 const thumbs = () => {
   const box = $('#thumbs'); box.innerHTML = '';
   items.forEach((it, i) => {
@@ -234,10 +237,23 @@ const addPhotos = e => {  // la photo apparaît tout de suite ; la réduction se
 $('#iCam').onchange = addPhotos; $('#iGal').onchange = addPhotos;
 $('#bCam').onclick = () => $('#iCam').click(); $('#bGal').onclick = () => $('#iGal').click();
 
+function showTmp() {  // repère de la position pendant que le formulaire est ouvert
+  if (!target || (editing && editing.kind === 'track') || !$('#fPoint').classList.contains('on')) return;
+  if (!tmp) tmp = L.circleMarker([target.lat, target.lng], {radius: 11, color: '#fff', weight: 3, fillColor: '#f2c230', fillOpacity: 1, interactive: false}).addTo(map);
+  else tmp.setLatLng([target.lat, target.lng]);
+}
+function hideTmp() { if (tmp) { map.removeLayer(tmp); tmp = null; } }
+function revealTarget() {  // recentre la carte si le point est caché sous le panneau
+  try {
+    const size = map.getSize(), vis = size.y - Math.max(0, $('#fPoint').offsetHeight - 72), px = map.latLngToContainerPoint([target.lat, target.lng]);
+    if (px.y > vis - 40 || px.y < 20 || px.x < 20 || px.x > size.x - 20) map.panBy([px.x - size.x / 2, px.y - vis / 2]);
+  } catch (e) {}
+}
 const showPos = () => {
   const tr = editing && editing.kind === 'track', pts = tr ? (editing.pts || editing.rec.pts) : null;
   $('#pPos').textContent = tr ? 'Tracé : ' + pts.length + ' sommets · ' + Math.round(len(pts)) + ' m'
     : target ? 'Position : ' + target.lat.toFixed(6) + ', ' + target.lng.toFixed(6) : '';
+  showTmp();
 };
 function openForm(o) {
   jobs = [];
@@ -246,6 +262,7 @@ function openForm(o) {
   $('#custom').hidden = !!o.track; $('#pLoc').hidden = !o.gps; $('#pTrk').hidden = !o.track; showPos();
   $('#pSave').textContent = editing ? 'Enregistrer les modifications' : 'Enregistrer le point';
   thumbs(); $('#fPoint').classList.add('on');
+  if (!o.track) { showTmp(); setTimeout(revealTarget, 60); }
 }
 function newPoint(pos) {
   if (!pos) return alert('Position GPS non disponible. Touchez la carte pour placer le point à la main.');
@@ -272,7 +289,7 @@ $('#ptGps').onclick = () => { setMode(null); newPoint(me); };
 $('#ptOff').onclick = () => setMode(null);
 map.on('click', e => {
   const ll = e.latlng;
-  if (mv) return;
+  if (mv || $('#fPoint').classList.contains('on')) return;  // formulaire ouvert : la carte reste consultable
   if (geo) { geo.pts.push([ll.lng, ll.lat, Date.now()]); return drawGeo(); }
   if (mapMode === 'point') {  // confirmation de la position avant l'ajout
     pend = ll;
@@ -287,11 +304,11 @@ document.addEventListener('click', e => {
 
 /* Déplacer un point en le glissant sur la carte */
 $('#pMap').onclick = () => {
-  $('#fPoint').classList.remove('on'); map.removeLayer(layerPts);
+  hideTmp(); $('#fPoint').classList.remove('on'); map.removeLayer(layerPts);
   mv = {m: L.marker([target.lat, target.lng], {draggable: true, icon: L.divIcon({className: 'vtx', iconSize: [26, 26]})}).addTo(map)};
   map.setView([target.lat, target.lng], Math.max(map.getZoom(), 18)); $('#mvBar').hidden = false;
 };
-function endMv() { map.removeLayer(mv.m); mv = null; $('#mvBar').hidden = true; layerPts.addTo(map); $('#fPoint').classList.add('on'); }
+function endMv() { map.removeLayer(mv.m); mv = null; $('#mvBar').hidden = true; layerPts.addTo(map); $('#fPoint').classList.add('on'); showTmp(); }
 $('#mOk').onclick = () => { const l = mv.m.getLatLng(); target = {lat: l.lat, lng: l.lng, acc: null}; endMv(); showPos(); };
 $('#mNo').onclick = endMv;
 
@@ -313,7 +330,7 @@ $('#pShape').onclick = () => {
 };
 $('#gOk').onclick = () => { editing.pts = geo.pts; endGeo(); showPos(); };
 $('#gNo').onclick = endGeo;
-$('#pCancel').onclick = () => { $('#fPoint').classList.remove('on'); editing = null; };
+$('#pCancel').onclick = () => { $('#fPoint').classList.remove('on'); editing = null; hideTmp(); };
 $('#pSave').onclick = async () => {
   const name = $('#pName').value.trim();
   if (!name) return alert('Saisissez un nom.');
@@ -337,7 +354,7 @@ $('#pSave').onclick = async () => {
     await DB.put('points', pt);
     if (ed) rmDir('Points/' + safe(ed.name)).then(() => savePointFiles(pt)); else savePointFiles(pt);
   }
-  $('#fPoint').classList.remove('on'); editing = null; draw();
+  $('#fPoint').classList.remove('on'); editing = null; hideTmp(); draw();
 };
 
 /* ---------- Trajets : automatique (GPS) ou manuel (carte), photos en option ---------- */
