@@ -40,6 +40,7 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 .bar2{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--acc);border-radius:8px;padding:8px}
 .bar2 span{flex:1;font-size:14px}
 .bar2 .btn{flex:none;padding:8px 12px}
+.leaflet-popup-content a{display:inline-block;padding:10px 6px;font-size:16px}
 .vtx{background:#f2c230;border:3px solid #12352b;border-radius:50%}
 #trkBar .btn{background:var(--bg);border-color:var(--acc)}
 #thumbs .th{position:relative}
@@ -58,6 +59,7 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
 <div id="stack">
   <div class="bar2" id="ptBar" hidden><span id="ptMsg"></span><button class="btn" id="ptGps">📍 Ma position</button><button class="btn" id="ptOff">✕</button></div>
   <div class="bar2" id="geoBar" hidden><span>Glisse un sommet · touche-le pour le supprimer · touche la carte pour prolonger</span><button class="btn p" id="gOk">✔</button><button class="btn" id="gNo">✕</button></div>
+  <div class="bar2" id="mvBar" hidden><span>Glisse le point à sa nouvelle position</span><button class="btn p" id="mOk">✔</button><button class="btn" id="mNo">✕</button></div>
   <div id="trkBar" hidden>
     <button class="btn" id="tPhoto">📷 Photo</button>
     <button class="btn" id="tPoint">📍 Point</button>
@@ -87,7 +89,7 @@ h3{margin:20px 0 0;font-size:15px;color:var(--acc)}
   <input type="file" id="iGal" accept="image/*" multiple hidden>
   <div id="thumbs"></div>
   <div class="vide" id="pPos"></div>
-  <div class="row" id="pLoc" hidden><button class="btn" id="pGps">📍 Ma position</button><button class="btn" id="pMap">🗺 Sur la carte</button></div>
+  <div class="row" id="pLoc" hidden><button class="btn" id="pMap">🗺 Déplacer sur la carte (glisser)</button></div>
   <div class="row" id="pTrk" hidden><button class="btn" id="pShape">✏️ Modifier le tracé sur la carte</button></div>
   <div class="row">
     <button class="btn" id="pCancel">Annuler</button>
@@ -259,24 +261,39 @@ function editTrack(t) {
   editing = {kind: 'track', rec: t}; items = (t.photos || []).map(h => ({b: h.blob, h}));
   openForm({title: 'Modifier le trajet', name: t.name, note: t.note, track: true});
 }
-let mapMode = null, geo = null;  // mapMode : 'point' (poser un point) | 'pick' (choisir une position)
-const busy = () => mapMode || geo || (rec && rec.mode === 'manual');
+let mapMode = null, geo = null, mv = null, pend = null;  // mapMode : 'point' = poser un point (avec confirmation)
+const busy = () => mapMode || geo || mv || (rec && rec.mode === 'manual');
 function setMode(m) {
   mapMode = m; $('#bPoint').classList.toggle('rec', m === 'point'); $('#ptBar').hidden = !m;
-  $('#ptMsg').textContent = m === 'pick' ? 'Touchez la carte pour la nouvelle position' : 'Touchez la carte pour placer le point';
-  $('#ptGps').hidden = m === 'pick';
+  $('#ptMsg').textContent = "Touchez la carte à l'emplacement du point"; if (!m) map.closePopup();
 }
 $('#bPoint').onclick = () => setMode(mapMode === 'point' ? null : 'point');
 $('#ptGps').onclick = () => { setMode(null); newPoint(me); };
-$('#ptOff').onclick = () => { const was = mapMode; setMode(null); if (was === 'pick') $('#fPoint').classList.add('on'); };
+$('#ptOff').onclick = () => setMode(null);
 map.on('click', e => {
   const ll = e.latlng;
+  if (mv) return;
   if (geo) { geo.pts.push([ll.lng, ll.lat, Date.now()]); return drawGeo(); }
-  if (mapMode === 'pick') { target = {lat: ll.lat, lng: ll.lng, acc: null}; setMode(null); showPos(); return $('#fPoint').classList.add('on'); }
-  if (mapMode === 'point') { setMode(null); return newPoint({lat: ll.lat, lng: ll.lng, acc: null}); }
+  if (mapMode === 'point') {  // confirmation de la position avant l'ajout
+    pend = ll;
+    return L.popup({closeButton: false}).setLatLng(ll)
+      .setContent('<div style="text-align:center">' + ll.lat.toFixed(6) + ', ' + ll.lng.toFixed(6) + '<br><a href="#" id="hand">✔ Créer un point ici</a></div>').openOn(map);
+  }
   if (rec && rec.mode === 'manual') addVertex(ll);
 });
-$('#pMap').onclick = () => { $('#fPoint').classList.remove('on'); setMode('pick'); };
+document.addEventListener('click', e => {
+  if (e.target.id === 'hand') { e.preventDefault(); map.closePopup(); setMode(null); newPoint({lat: pend.lat, lng: pend.lng, acc: null}); }
+});
+
+/* Déplacer un point en le glissant sur la carte */
+$('#pMap').onclick = () => {
+  $('#fPoint').classList.remove('on'); map.removeLayer(layerPts);
+  mv = {m: L.marker([target.lat, target.lng], {draggable: true, icon: L.divIcon({className: 'vtx', iconSize: [26, 26]})}).addTo(map)};
+  map.setView([target.lat, target.lng], Math.max(map.getZoom(), 18)); $('#mvBar').hidden = false;
+};
+function endMv() { map.removeLayer(mv.m); mv = null; $('#mvBar').hidden = true; layerPts.addTo(map); $('#fPoint').classList.add('on'); }
+$('#mOk').onclick = () => { const l = mv.m.getLatLng(); target = {lat: l.lat, lng: l.lng, acc: null}; endMv(); showPos(); };
+$('#mNo').onclick = endMv;
 
 /* Modification du tracé : sommets déplaçables, suppression, prolongement */
 function drawGeo() {
@@ -287,7 +304,7 @@ function drawGeo() {
     m.on('click', () => { if (geo.pts.length > 2 && confirm('Supprimer ce sommet ?')) { geo.pts.splice(i, 1); drawGeo(); } });
   });
 }
-function endGeo() { map.removeLayer(geo.line); map.removeLayer(geo.marks); geo = null; $('#geoBar').hidden = true; layerTrk.addTo(map); $('#fPoint').classList.add('on'); }
+function endGeo() { map.removeLayer(geo.line); map.removeLayer(geo.marks); geo = null; $('#geoBar').hidden = true; layerTrk.addTo(map); layerPts.eachLayer(l => l.bringToFront()); $('#fPoint').classList.add('on'); }
 $('#pShape').onclick = () => {
   const pts = (editing.pts || editing.rec.pts).map(q => q.slice());
   $('#fPoint').classList.remove('on'); map.removeLayer(layerTrk);
@@ -297,10 +314,6 @@ $('#pShape').onclick = () => {
 $('#gOk').onclick = () => { editing.pts = geo.pts; endGeo(); showPos(); };
 $('#gNo').onclick = endGeo;
 $('#pCancel').onclick = () => { $('#fPoint').classList.remove('on'); editing = null; };
-$('#pGps').onclick = () => {
-  if (!me) return alert('Position GPS non disponible.');
-  target = {lat: me.lat, lng: me.lng, acc: me.acc, alt: me.alt}; showPos();
-};
 $('#pSave').onclick = async () => {
   const name = $('#pName').value.trim();
   if (!name) return alert('Saisissez un nom.');
